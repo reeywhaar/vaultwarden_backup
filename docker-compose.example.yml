@@ -1,0 +1,59 @@
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    volumes:
+      - ./data/:/data/
+    environment:
+      - SIGNUPS_ALLOWED=false
+      # IMPORTANT: this backup image only supports the SQLite backend (the default).
+      # Do NOT set DATABASE_URL to a MySQL/Postgres server if you rely on this backup.
+
+  backup:
+    image: ghcr.io/reeywhaar/vaultwarden_backup:latest
+    container_name: vaultwardenbackup
+    restart: unless-stopped
+    depends_on:
+      - vaultwarden
+    volumes:
+      # mount Vaultwarden's data directory read-only
+      - ./data/:/data/:ro
+      # local archive storage (rotated by the retention policy)
+      - ./backups/:/backups/
+    networks:
+      - default
+      - backup-net
+    environment:
+      # --- required ---
+      # password used to encrypt the archive — WITHOUT IT BACKUPS ARE UNRECOVERABLE
+      - BACKUP_PASSWORD=change-me-and-store-it-safely
+      # remote subdirectory (must match the subdirectory granted to BACKUP_TOKEN)
+      - BACKIO_SUBDIRECTORY=vaultwarden
+
+      # --- remote upload via backio (optional) ---
+      # omit BACKUP_TOKEN entirely to keep backups local only
+      - BACKIO_URL=http://backio:8080
+      - BACKIO_PROVIDER=gdrive
+      - BACKUP_TOKEN=your-backio-token
+
+  # backio forwards archives to a cloud provider (Google Drive, S3, ...).
+  # See https://github.com/reeywhaar/backio
+  backio:
+    image: ghcr.io/reeywhaar/backio:latest
+    container_name: backio
+    restart: unless-stopped
+    volumes:
+      - backio-data:/data
+    networks:
+      - backup-net
+    environment:
+      # base64-encoded rclone config (e.g. from backio's ./setup-gdrive.sh)
+      - RCLONE_CONF_BASE64=${RCLONE_CONF_BASE64}
+
+networks:
+  backup-net:
+    driver: bridge
+
+volumes:
+  backio-data:
